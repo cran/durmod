@@ -400,10 +400,15 @@ NumericVector cloglik(List dataset, List pset, List control,
   List risklist = as<List>(dataset["riskset"]);
   const int nrisks = risklist.size();
   IntegerVector state = as<IntegerVector>(dataset["state"]);
+  
+  const int fishblock = as<IntegerVector>(control["fishblock"])[0];
 
-  bool *riskmasks = (bool*) R_alloc(nrisks*transitions, sizeof(bool)); 
-  memset(riskmasks,0,nrisks*transitions*sizeof(bool));
-
+  bool *riskmasks = 0;
+  if(nrisks > 0) {
+    riskmasks = (bool*) R_alloc(nrisks*transitions, sizeof(bool)); 
+    memset(riskmasks,0,nrisks*transitions*sizeof(bool));
+  }
+  
   for(int i = 0; i < nrisks; i++) {
     IntegerVector v = as<IntegerVector>(risklist[i]);
     for(int t = 0; t < v.size(); t++) {
@@ -474,7 +479,6 @@ NumericVector cloglik(List dataset, List pset, List control,
     }
   }
 
-  const int fishblock = 128 ;
   const bool dograd = dogradient ? true : dofisher;
 
   // find the number of parameters
@@ -655,17 +659,17 @@ NumericVector cloglik(List dataset, List pset, List control,
 List genspell(double x1,double x2, double ve, double vp, double censor) {
   std::vector<double> x1s,x2s,alphas,ds,ts;
   bool done = false, onp = false;
-  double alpha = 0, newalpha=0,d,t;
+  double alpha = 0, newalpha=0, newx1=x1, newx2=x2, d,t;
   int i = 0;
-  double cumtime = 0;
+  double cumtime = R::runif(0,censor); // draw start time when individual enters dataset
   while(!done) {
-    alpha = newalpha;
+    alpha = newalpha; x1=newx1; x2=newx2;
     double te = -log(R::runif(0,1))*exp(-(x1-x2+ve+0.2*alpha));
-    double tp = onp ? 1e200 : -log(R::runif(0,1))*exp(-(x1+0.5*x2+vp));
-    double tc = -log(R::runif(0,1))*70.0;
+    double tp = onp ? DBL_MAX : -log(R::runif(0,1))*exp(-(x1+0.5*x2+vp));
+    double tc = -log(R::runif(0,1))*35.0;
     if(tc < te && tc < tp) {
-      x1 = x1 + R::rnorm(0,1);
-      x2 = x2 + R::rnorm(0,1);
+      newx1 = x1 + R::rnorm(0,1);
+      newx2 = x2 + R::rnorm(0,1);
       d = 0;
       t = tc;
     } else if(te < tc && te < tp) {

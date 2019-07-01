@@ -7,7 +7,7 @@ head(durdata,15)
 risksets <- list(unemp=c('job','program'), onprogram='job')
 
 ## ------------------------------------------------------------------------
-ctrl <- mphcrm.control(iters=6, threads=2)
+ctrl <- mphcrm.control(iters=4, threads=1)
 
 ## ------------------------------------------------------------------------
 set.seed(42) # for reproducibility
@@ -24,4 +24,22 @@ summary(best)
 
 ## ------------------------------------------------------------------------
 t(sapply(opt, function(o) summary(o)$coefs["job.alpha",]))
+
+## ------------------------------------------------------------------------
+summary(fit[[1]])
+
+## ----eval=FALSE----------------------------------------------------------
+#  library(durmod)
+#  data(durdata)
+#  newfit <- eval(attr(fit,'call'))
+
+## ------------------------------------------------------------------------
+round(mphdist(fit[[1]]),6)
+# and the moments,
+mphmoments(fit[[1]])
+# and covariance matrix
+mphcov(fit[[1]])
+
+## ------------------------------------------------------------------------
+attributes(durdata)[c('means','cov')]
 

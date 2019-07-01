@@ -65,7 +65,7 @@ summary.mphcrm.pset <- function(object,...) {
   val <- flatten(object)
   dist <- grep('(\\.mu[0-9]+|pargs[0-9]*)$',names(val))
   list(value = val[-dist], 
-       moments=mphdist(object))
+       mphdist=mphdist(object))
 }
 
 #' @method print mphcrm.pset
@@ -154,7 +154,7 @@ exclude <- function(x,exclude,...) {
 
 #' @method logLik mphcrm.opt
 #' @param useobs Use number of observations for computing degrees of freedom, not number of spells.
-#' @export
+##' @export
 logLik.mphcrm.opt <- function(object, ..., useobs=FALSE) {
   val <- object$value
   attr(val, 'nall') <- object$nobs

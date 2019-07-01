@@ -58,23 +58,24 @@
 #' job, specify \code{C(job, alpha+x3)}. This comes in addition to the ordinary covariates.
 #' Then name \code{job} refers to a level in \code{d}, the transition taken. 
 #' @param data
-#' A data frame which contains the covariates.
+#' A data frame which contains the covariates. It must be sorted on individuals.
 #' @param timing
 #' character. The timing in the duration model. Can be one of
 #' \itemize{
-#' \item "exact" The timing is exact, the transition occured at the end of the observation interval.
-#' \item "interval" The transition occured some time during the observation interval. This model
+#' \item \code{"exact"}. The timing is exact, the transition occured at the end of the observation interval.
+#' \item \code{"interval"}. The transition occured some time during the observation interval. This model
 #'   can be notoriously hard to estimate due to unfavourable numerics. It could be worthwhile to
 #'   lower the control parameter \code{ll.improve} to 0.0001 or something, to ensure it does not
 #'   give up to early.
-#' \item "none" There is no timing, the transition occured, or not. A logit model is used.
+#' \item \code{"none"}. There is no timing, the transition occured, or not. A logit model is used.
 #' }
 #' @param risksets
 #' A list of character vectors. Each vector is a list of transitions, i.e. which risks are present for
 #' the observation. The elements of the vectors must be levels of the covariate which is the
 #' left hand side of the \code{formula}.
 #' If the state variable in the formula is a factor, the \code{risksets} argument should be a named list, with
-#' names matching the levels of \code{state}.
+#' names matching the levels of \code{state}. If all risks are present at all times, the \code{risksets}-argument
+#' can be specified as \code{NULL}, or ignored.
 #' @param subset
 #' For specifying a subset of the dataset, similar to \code{\link{lm}}.
 #' @param na.action
@@ -93,18 +94,18 @@
 #' After the initial model has been estimated, it tries to add a masspoint to the mixing
 #' distribution, then estimates the model with this new distribution.
 #'
-#' It continues to add masspoints in this way until eithr it can not improve the likelihood, or
-#' the number of iterations as specified in control$iters are reached.
+#' The algorithm continues to add masspoints in this way until either it can not improve the likelihood, or
+#' the number of iterations as specified in \code{control$iters} are reached.
 #'
 #' The result of every iteration is returned in a list.
 #'
 #' If you interrupt \code{mphcrm} it will catch the interrupt and return with the
-#' estimates it has found so far.
+#' estimates it has found so far. This behaviour can be switched off with \code{control$trap.interrupt=FALSE}.
 #' @note
 #' The algorithm is not fully deterministic. New points are searched for randomly, there
 #' is no canonical order in which they can be found. It can happen that a point is found
 #' early which makes the rest of the estimation hard, so it terminates early. In particular
-#' when using interval timing. One should
+#' when using interval timing. One should then
 #' make a couple of runs to ensure they yield reasonably equal results.
 #' @examples
 #' data(durdata)
@@ -115,7 +116,7 @@
 #' best <- Fit[[1]]
 #' summary(best)
 #' @seealso A description of the dataset is available in \code{\link{datagen}} and \code{\link{durdata}},
-#' and in the vignette \code{vignette("mphcrmwhat")}
+#' and in the vignette \code{vignette("whatmph")}
 #' @export
 mphcrm <- function(formula,data,risksets=NULL,
                    timing=c('exact','interval','none'),
@@ -146,7 +147,8 @@ mphcrm <- function(formula,data,risksets=NULL,
 
   state <- dataset$state
   hasriskset <- !is.null(risksets)
-  if(hasriskset && is.null(state)) warning("riskset is specified, but no state S()")
+  if(hasriskset && is.null(state)) 
+    warning("Riskset is specified, but no state S(). All risks are assumed to be present.")
   if(is.null(state)) hasriskset <- FALSE
 
   if(hasriskset) {
@@ -194,7 +196,7 @@ mphcrm <- function(formula,data,risksets=NULL,
   if(!is.null(control$cluster)) {prepcluster(dataset,control); on.exit(cleancluster(control$cluster))}
 
   z <- pointiter(dataset,pset,control)
-
+  
   structure(z,call=match.call())
 }
 
@@ -204,12 +206,13 @@ mphcrm <- function(formula,data,risksets=NULL,
 #' Modify the default estimation parameters for
 #'   \code{\link{mphcrm}}
 #' @param ...
-#' parameters to change \itemize{
-#' \item threads integer. The number of threads to use. Defaults to \code{getOption('durmod.threads')}
-#' \item iters integer. How many iterations should we maximally run. Defaults to 12.
-#' \item ll.improve numeric. How much must the be log-likelihood improve from the last iteration before
+#' parameters that can be adjusted. See the \code{vignette("whatmph")} for more details.
+#' \itemize{
+#' \item threads. integer. The number of threads to use. Defaults to \code{getOption('durmod.threads')}
+#' \item iters. integer. How many iterations should we maximally run. Defaults to 12.
+#' \item ll.improve. numeric. How much must the be log-likelihood improve from the last iteration before
 #'   termination. Defaults to 0.001
-#' \item newpoint.maxtime numeric. For how many seconds should a global search for a new point
+#' \item newpoint.maxtime. numeric. For how many seconds should a global search for a new point
 #'   improving the likelihood be conducted before we continue with the best we have found. Defaults to
 #'   120.
 #' \item callback. A
@@ -220,31 +223,37 @@ mphcrm <- function(formula,data,risksets=NULL,
 #'   \code{mphcrm()} will return with the most recently estimated set
 #'   of parameters. See the help on \code{\link{mphcrm.callback}} for
 #'   information on the argument.
-#' \item trap.interrupt logical. Should interrupts be trapped so that \code{mphcrm} returns gracefully?
+#' \item trap.interrupt. logical. Should interrupts be trapped so that \code{mphcrm} returns gracefully?
 #' In this case the program will continue. Defaults to \code{interactive()}.
-#' \item method character. The method used for optimization. Currently 'BFGS' is supported, but it
-#' might work with 'L-BFGS-B' also, if memory is constrained.
+#' \item cluster. Cluster specification from package \pkg{parallel} or \pkg{snow}.
 #' }
 #' @note
-#' There are other parameters too, I may document them later. Instead of cluttering
+#' There are more parameters documented in a vignette. Instead of cluttering
 #' the source code with constants and stuff required by various optimization routines, they
-#' have been put in this control list. You should perhaps not change them.
+#' have been put in this control list. 
 #' @return
 #' list of control parameters suitable for the \code{control}
-#'   argument of \code{\link{mphcrm}}
+#'   argument of \code{\link{mphcrm}}.
 #' @export
 mphcrm.control <- function(...) {
-  ctrl <- list(iters=15,threads=getOption('durmod.threads'),gradient=TRUE, fisher=TRUE, hessian=FALSE, 
-               method='BFGS', gdiff=FALSE, minprob=1e-20, eqtol=1e-4, newprob=1e-4, jobname='mphcrm', 
+  ctrl <- list(iters=25,threads=getOption('durmod.threads'),gradient=TRUE, fisher=TRUE, hessian=FALSE, 
+               method='BFGS', gdiff=FALSE, minprob=1e-20, eqtol=1e-4, newprob=1e-3, jobname='mphcrm', 
                ll.improve=1e-3, e.improve=1e-3,
                trap.interrupt=interactive(),
                tspec='%T', newpoint.maxtime=120,
+               lowint=2,highint=2,
+               tol=1e-4,
+               method='BFGS',
+               itfac=20L,
+               fishblock=128L,
                callback=mphcrm.callback,
                cluster=NULL)
   args <- list(...)
-  bad <- !(names(args) %in% names(ctrl))
-  if(any(bad)) {message("unknown control parameter(s): ", paste(names(args)[bad], collapse=' '))}
-  ctrl[names(args)] <- args
+  fullargs <- names(ctrl)[pmatch(names(args), names(ctrl))]
+  bad <- names(args)[is.na(fullargs)]
+  fullargs[is.na(fullargs)] <- bad
+  if(length(bad)) {message("unknown control parameter(s): ", bad, collapse=' ')}
+  ctrl[fullargs] <- args
   ctrl
 }
 
@@ -269,13 +278,25 @@ mphcrm.control <- function(...) {
 #' @details
 #' If you write your own callback function it will replace the default function, but you can
 #' of course call the default callback from your own callback function, and in addition print your
-#' own diagnostics, or save the intermediate \code{opt} in a file, or whatever.
+#' own diagnostics, or save the intermediate \code{opt} in a file, or whatever. You can even
+#' stop the estimation by doing a \code{stop('<some message>')}, and \code{mphcrm} will return
+#' with the estimates done so far, provided the control parameter \code{trap.interrupt=TRUE}.
 #' 
 #' @note
 #' Beware that
 #' \code{control} contains a reference to the callback function, which may contain a reference
 #' to the top-level environment, which may contain the full dataset. So if you save \code{control}
-#' you may end up saving the entire dataset.
+#' to file, you may end up saving the entire dataset.
+#' @examples
+#' callback <- function(fromwhere, opt, dataset, control, ...) {
+#'   # call the standard callback to print a diagnostic line
+#'   mphcrm.callback(fromwhere, opt, dataset, control, ...)
+#'   # print the distribution and two coefficients
+#'   if(fromwhere == 'full') {
+#'     print(round(mphdist(opt),6))
+#'     print(summary(opt)$coefs[c('job.alpha','job.x1'),])
+#'   }
+#' }
 #' @export
 mphcrm.callback <- local({
   lastfull <- Sys.time()
@@ -286,10 +307,17 @@ mphcrm.callback <- local({
       p <- a2p(opt$pargs)
       bad <- list(...)[['remove']]
       cat(jobname,  format(Sys.time(),control$tspec), 'remove probs', sprintf(' %.2e',p[bad]),'\n')
+    } else if(fromwhere=='equalpoints') {
+      cat(jobname, format(Sys.time(), control$tspec), 'equal points combined:\n')
+      print(list(...)[['eqpoints']])
     } else {
       if(is.numeric(opt$convergence) && opt$convergence != 0) {
-      if(fromwhere != 'newpoint' || !(opt$convergence %in% c(2))) 
-        cat(jobname, format(now,control$tspec), fromwhere, 'convstatus:"',opt$convergence, opt$message,'"\n')
+        if(fromwhere != 'newpoint' || !(opt$convergence %in% c(2))) {
+          mess <- if(is.null(opt$message)) '' else opt$message
+          cat(sprintf('%s %s %s: convergence failure %.4f, %d %s\n',
+                      jobname, format(now,control$tspec), fromwhere,
+                      opt$value, opt$convergence, mess))
+        }
       }
     }
 
@@ -297,10 +325,10 @@ mphcrm.callback <- local({
     tdiff <- timestr(difftime(now,lastfull,units='s'))
     assign('lastfull',now,environment(sys.function())) # 
     rc <- if(!is.null(opt$fisher)) rcond(opt$fisher) else NA
-    grd <- if(!is.null(opt$gradient)) sqrt(sum(opt$gradient^2)) else NA
+    grd <- if(!is.null(opt$gradient)) sqrt(mean(opt$gradient^2)) else NA
     p <- a2p(opt$par$pargs)
     cat(jobname,format(now,control$tspec), 
-        sprintf('i:%d pts:%d L:%.4f g:%.3g mp:%.5g rcond:%.2g e:%.4f t:%s\n',
+        sprintf('i:%d p:%d L:%.4f g:%.3g mp:%.5g rc:%.2g e:%.4f t:%s\n',
                 control$mainiter, length(opt$par$pargs)+1, opt$value, grd, min(p), rc, -sum(p*log(p)),
                 tdiff))
     #  if(rc < sqrt(.Machine$double.eps)) {message(sprintf('%s  ***bad condition: %.2e',jobname,rc)); return(FALSE)}
@@ -332,26 +360,35 @@ pointiter <- function(dataset,pset,control) {
   opt0$mainiter <- 0
   opt0$nobs <- dataset$nobs
   opt0$nspells <- dataset$nspells
+  opt0$entropy <- 0
   class(opt0) <- 'mphcrm.opt'
 
-  control$callback('nullmodel',opt0,dataset,control)
   intr <- FALSE
-  iopt <- opt <- list(nullmodel=opt0)
+  prevopt <- opt0
+  iopt <- opt <- list(nullmodel=rescale(dataset,opt0))
+  control$callback('nullmodel',opt[['nullmodel']],dataset,control)
+
   tryCatch(
     {
-      i <- 0; done <- FALSE
-      while(!done) {
+      i <- 0; improve <- TRUE
+      while(improve && i < control$iters) {
         i <- i+1
         control$mainiter <- i
-        opt <- c(list(ml(dataset,pset,control)), opt)
-        opt[[1]]$mainiter <- i
-        names(opt)[1] <- sprintf('iter%d',i)
-        control$callback('full',opt[[1]], dataset,control)
-        ll.improve <- opt[[1]]$value - opt[[2]]$value
-        e.improve <- abs(opt[[1]]$entropy - opt[[2]]$entropy)
-        done <- (ll.improve < control$ll.improve && e.improve < control$e.improve)|| i >= control$iters
-        if(!done) pset <- addpoint(dataset,opt[[1]]$par,opt[[1]]$value,control)
+        newopt <- ml(dataset,pset,control)
+        newopt$mainiter <- i
+        unscaleopt <- rescale(dataset,newopt)
+        # insert into list
+        opt <- c(list(unscaleopt), opt)
+        names(opt)[1L] <- sprintf('iter%d',i)
+        control$callback('full',unscaleopt, dataset,control)
+        # check termination
+        ll.improve <- newopt$value - prevopt$value
+        e.improve <- abs(newopt$entropy - prevopt$entropy)
+        improve <- (ll.improve > control$ll.improve || e.improve > control$e.improve)
+        prevopt <- newopt
+        if(improve && i < control$iters) pset <- addpoint(dataset,newopt$par,newopt$value,control)
       }
+      if(!improve) opt <- opt[-1]
     },
     error=function(e) {
       assign('intr',TRUE,environment(sys.function()))
@@ -377,29 +414,32 @@ pointiter <- function(dataset,pset,control) {
     }
   }
 
-# rescale the parameters
-  scales <- unlist(lapply(dataset$data, function(dd) attr(dd,'recode')[[2]]))
-  opt <- lapply(opt, function(op) {
-    nm <- names(op$gradient)
-    scalevec <- rep(1,length(nm))
-    names(scalevec) <- nm
-    scalevec[names(scales)] <- scales
-    scalemat <- scalevec * rep(scalevec,each=length(scalevec))
-    if(!is.null(op$gradient)) op$gradient <- op$gradient / scalevec
-    if(!is.null(op$numgrad)) op$numgrad <- op$numgrad / scalevec
-    if(!is.null(op$fisher)) op$fisher <- op$fisher / scalemat
-    if(!is.null(op$hessian)) op$hessian <- op$hessian / scalemat
-    for(tr in names(dataset$data)) {
-      offset <- attr(dataset$data[[tr]],'recode')$offset
-      scale <- attr(dataset$data[[tr]],'recode')$scale
-      op$par$parset[[tr]]$pars[] <- op$par$parset[[tr]]$pars*scale
-      muadj <- sum(op$par$parset[[tr]]$pars*offset)
-      op$par$parset[[tr]]$mu <- op$par$parset[[tr]]$mu - muadj
-    }
-    op
-  })
-
   structure(opt,class='mphcrm.list')
+}
+
+# Rescale parameters
+#
+# 
+rescale <- function(dataset, opt) {
+  for(tr in names(dataset$data)) {
+    offset <- attr(dataset$data[[tr]],'recode')$offset
+    scale <- attr(dataset$data[[tr]],'recode')$scale
+    opt$par$parset[[tr]]$pars[] <- opt$par$parset[[tr]]$pars*scale
+    muadj <- sum(opt$par$parset[[tr]]$pars*offset)
+    opt$par$parset[[tr]]$mu <- opt$par$parset[[tr]]$mu - muadj
+  }
+  if(is.null(opt$gradient)) return(opt)
+  scales <- unlist(lapply(dataset$data, function(dd) attr(dd,'recode')[[2]]))
+  nm <- names(opt$gradient)
+  scalevec <- rep(1,length(nm))
+  names(scalevec) <- nm
+  scalevec[names(scales)] <- scales
+  scalemat <- scalevec * rep(scalevec,each=length(scalevec))
+  opt$gradient <- opt$gradient / scalevec
+  if(!is.null(opt$numgrad)) opt$numgrad <- opt$numgrad / scalevec
+  if(!is.null(opt$fisher)) opt$fisher <- opt$fisher / scalemat
+  if(!is.null(opt$hessian)) opt$hessian <- opt$hessian / scalemat
+  opt
 }
 
 optprobs <- function(dataset,pset,control) {
@@ -416,28 +456,22 @@ optprobs <- function(dataset,pset,control) {
 }
 
 optdist <- function(dataset,pset,control) {
+  # find position of the distribution
+  val <- flatten(pset)
+  distpos <- grep('(\\.mu[0-9]+|pargs[0-9]*)$',names(val))
+
   dfun <- function(a) {
-    n <- length(pset$pargs)+1
-    pset$pargs[] <- a[seq_len(n-1)]
-    pos <- n
-    for(i in seq_along(pset$parset)) {
-      pset$parset[[i]]$mu[] <- a[pos:(pos+n-1)]
-      pos <- pos+n
-    }
-    -mphloglik(dataset,pset,control=control)
+    val[distpos] <- a
+    -mphloglik(dataset,unflatten(val),control=control)
   }
-  args <- c(pset$pargs,sapply(pset$parset, function(pp) pp$mu))
-#  message('optimize dist')
-  dopt <- optim(args,dfun,method='BFGS',control=list(trace=0,REPORT=100))
-  n <- length(pset$pargs)
-#  message('new probs',sprintf(' %.7f',a2p(dopt$par[1:n])), ' value: ',dopt$value)
-  pset$pargs[] <- dopt$par[seq_len(n)]
-  pos <- n+1
-  for(i in seq_along(pset$parset)) {
-    pset$parset[[i]]$mu[] <- dopt$par[pos:(pos+n)]
-    pos <- pos+n+1
+  gdfun <- function(a) {
+    val[distpos] <- a
+    -attr(mphloglik(dataset,unflatten(val),dogradient=TRUE, control=control),'gradient')[distpos]
   }
-  dopt$par <- pset
+
+  dopt <- optim(val[distpos],dfun,gdfun,method='BFGS',control=list(trace=0,REPORT=100))
+  val[distpos] <- dopt$par
+  dopt$par <- unflatten(val)
   control$callback('dist',dopt,dataset,control)
   pset
 }
@@ -447,8 +481,6 @@ newpoint <- function(dataset,pset,value,control) {
   pr <- a2p(pset$pargs)
   newprob <- if(gdiff) 0 else control$newprob
   newpr <- c( (1 - newprob)*pr, newprob)
-#  newpr <- newpr/sum(newpr)
-  #  newpr <- c(pr,0)
   newset <- makeparset(dataset,length(pr)+1,pset)
   newset$pargs[] = p2a(newpr)
   np <- length(newpr)
@@ -459,19 +491,34 @@ newpoint <- function(dataset,pset,value,control) {
     }
     -mphloglik(dataset,newset,gdiff=gdiff,control=control)
   }
-  args <- runif(length(newset$parset),-10,1)
-  muopt <- nloptr::nloptr(args, fun, lb=rep(-10,ntrans), ub=rep(1,ntrans),gdiff=gdiff,
-                          opts=list(algorithm='NLOPT_GN_ISRES',stopval=if(gdiff) 0 else -value-newprob,
-                                    maxtime=control$newpoint.maxtime,maxeval=10000,population=10*length(args)))
+
+  # find ranges for the mus.
+  # stick to the mean +/- something  in each dimension
+  mom <- mphmoments(pset)
+  low <- log(mom[,'mean']) - control$lowint
+  high <- log(mom[,'mean']) + control$highint
+  args <- runif(length(low),0,1)*(high-low) + low
+  muopt <- nloptr::nloptr(args, fun,lb=low, ub=high, gdiff=gdiff,
+                          opts=list(algorithm='NLOPT_GN_ISRES',
+                                    stopval=if(gdiff) -control$ll.improve else -value-control$ll.improve,
+                                    xtol_rel=0, xtol_abs=0,
+                                    maxtime=control$newpoint.maxtime,
+                                    maxeval=10000*length(args),population=20*length(args)))
+
   if(!gdiff && !(muopt$status %in% c(0,2))) {
-    # that one failed, try gdiff instead
+    muopt$convergence <- muopt$status
+    muopt$value <- muopt$objective 
+    control$callback('newpoint',muopt,dataset,control)
+    # that one failed, try gdiff instead, broader interval
     newset$pargs[] <- p2a(c(pr,0))
     gdiff <- TRUE
-    muopt <- nloptr::nloptr(args, fun, lb=rep(-10,ntrans), ub=rep(1,ntrans),gdiff=TRUE,
-                            opts=list(algorithm='NLOPT_GN_ISRES',stopval=0,
-                                      maxtime=control$newpoint.maxtime,maxeval=10000,population=10*length(args)))
+    muopt <- nloptr::nloptr(args, fun, lb=low-2, ub=high+2,gdiff=TRUE,
+                            opts=list(algorithm='NLOPT_GN_ISRES',stopval=-control$ll.improve,
+                                      xtol_rel=0, xtol_abs=0,
+                                      maxtime=control$newpoint.maxtime,
+                                      maxeval=10000*length(args),population=20*length(args)))
   }
-  muopt$objective <- -muopt$objective
+  muopt$value <- muopt$objective 
   muopt$convergence <- muopt$status
   control$callback('newpoint',muopt,dataset,control)
   
@@ -500,7 +547,7 @@ badpoints <- function(pset,control) {
         mumat <- rbind(muj,mui)
         rownames(mumat) <- c(j,i)
         colnames(mumat) <- names(pset$parset)
-        control$callback('equalpoints',pset,NULL,control,cbind(prob=c(p[j],p[i]),exp(mumat)))
+        control$callback('equalpoints',pset,NULL,control,eqpoints=cbind(prob=c(p[j],p[i]),exp(mumat)))
 #        cat(sprintf('%s %s points %d and %d are equal\n',jobname, format(Sys.time(),control$tspec),j,i),'\n')
 #        print()
         okpt[i] <- FALSE
@@ -553,10 +600,28 @@ hLL <- function(args, skel, dataset, ctrl) {
 
 
 optfull <- function(dataset, pset, control) {
+  if(!identical(control$method,'BFGS')) {
+    method <- control$method
+    if(!length(grep('^NLOPT_',method))) method <- paste('NLOPT_LD_',method,sep='') 
+    args <- flatten(pset)
+    lb <- rep(-Inf,length(args))
+    ub <- rep(Inf,length(args))
+    nlopt <- nloptr::nloptr(args, LL, gLL, lb=lb, ub=ub, 
+                            skel=attr(args,'skeleton'), ctrl=control, dataset=dataset,
+                            opts=list(algorithm=method,
+                                      maxeval=control$itfac*length(args), ftol_abs=control$tol, xtol_rel=0))
+    nlopt$par <- unflatten(nlopt$solution,attr(args,'skeleton'))
+    nlopt$value <- nlopt$objective
+    nlopt$convergence <- if(nlopt$status==3) 0 else nlopt$status
+    return(nlopt)
+}
+
   args <- flatten(pset)
+  val <- mphloglik(dataset,pset,dogradient=TRUE,control=control)
+  tol <- 1e-4*control$tol/(control$tol+abs(val))
   opt <- optim(args,LL,gLL,method=control$method,
-        control=list(trace=0,REPORT=10,maxit=20*length(args),lmm=60,
-                     abstol=1e-4,reltol=1e-14),
+        control=list(trace=0,REPORT=10,maxit=control$itfac*length(args),lmm=60,
+                     reltol=tol),
         skel=attr(args,'skeleton'), ctrl=control,dataset=dataset)
   opt$par <- unflatten(opt$par)
   opt

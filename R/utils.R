@@ -53,7 +53,7 @@ nazero <- function(x) ifelse(is.na(x),0,x)
 #' best <- fit[[1]]
 #' mphdist(best)
 #' mphmoments(best)
-#' mphcovs.log(best)
+#' mphcov.log(best)
 #' @export
 mphdist <- function(pset) {
   if(inherits(pset,'mphcrm.list')) pset <- pset[[1]]$par
@@ -92,12 +92,14 @@ mphdist.log <- function(pset) {
 #' @export
 mphmoments <- function(pset) {
   dist <- mphdist(pset)
-  mean <- rowSums(as.matrix(apply(dist, 1, function(x) x[1]*x[-1])))
-  variance <- rowSums(as.matrix(apply(dist, 1, function(x) x[1]*(x[-1]-mean)^2)))
+  mean <- colSums(dist[,1]*dist[,-1,drop=FALSE])
+  if(length(mean) == 1) 
+    variance <- sum(dist[,1]*(dist[,-1]-mean)^2) 
+  else 
+    variance <- rowSums(apply(dist, 1, function(x) x[1]*(x[-1]-mean)^2))
   sd <- sqrt(variance)
   cbind(mean,variance,sd)
 }
-
 #' Extract moments of the mixed proportional log hazard distribution
 #' @rdname mphdist
 #' @description
@@ -105,8 +107,11 @@ mphmoments <- function(pset) {
 #' @export
 mphmoments.log <- function(pset) {
   dist <- mphdist.log(pset)
-  mean <- rowSums(as.matrix(apply(dist, 1, function(x) x[1]*x[-1])))
-  variance <- rowSums(as.matrix(apply(dist, 1, function(x) x[1]*(x[-1]-mean)^2)))
+  mean <- colSums(dist[,1]*dist[,-1,drop=FALSE])
+  if(length(mean) == 1) 
+    variance <- sum(dist[,1]*(dist[,-1]-mean)^2) 
+  else
+    variance <- rowSums(as.matrix(apply(dist, 1, function(x) x[1]*(x[-1]-mean)^2)))
   sd <- sqrt(variance)
   cbind(mean,variance,sd)
 }
@@ -114,23 +119,25 @@ mphmoments.log <- function(pset) {
 #' Extract covariance matrix of the proportional hazard distribution
 #' @rdname mphdist
 #' @description
-#' \code{mphcovs} returns the variance/covariance matrix of the hazard distribution.
+#' \code{mphcov} returns the variance/covariance matrix of the hazard distribution.
 #' @export
-mphcovs <- function(pset) {
+mphcov <- function(pset) {
   dist <- mphdist(pset)
-  mean <- rowSums(as.matrix(apply(dist, 1, function(x) x[1]*x[-1])))
-  crossprod(dist[,1]*(dist[,-1]-rep(mean,echo=nrow(dist))))
+  mean <- colSums(dist[,1]*dist[,-1,drop=FALSE])
+  crossprod(sqrt(dist[,1])*(dist[,-1,drop=FALSE]-rep(mean,each=nrow(dist))))
 }
+
+
 
 #' Extract covariance matrix of the proportional hazard distribution
 #' @rdname mphdist
 #' @description
-#' \code{mphcovs.log} returns the variance/covariance matrix of the log hazard distribution.
+#' \code{mphcov.log} returns the variance/covariance matrix of the log hazard distribution.
 #' @export
-mphcovs.log <- function(pset) {
+mphcov.log <- function(pset) {
   dist <- mphdist.log(pset)
-  mean <- rowSums(as.matrix(apply(dist, 1, function(x) x[1]*x[-1])))
-  crossprod(dist[,1]*(dist[,-1]-rep(mean,echo=nrow(dist))))
+  mean <- colSums(dist[,1]*dist[,-1,drop=FALSE])
+  crossprod(sqrt(dist[,1])*(dist[,-1,drop=FALSE]-rep(mean,each=nrow(dist))))
 }
 
 #' Extract standard errors of the estimated parameters

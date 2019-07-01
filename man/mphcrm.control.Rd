@@ -7,12 +7,13 @@
 mphcrm.control(...)
 }
 \arguments{
-\item{...}{parameters to change \itemize{
-\item threads integer. The number of threads to use. Defaults to \code{getOption('durmod.threads')}
-\item iters integer. How many iterations should we maximally run. Defaults to 12.
-\item ll.improve numeric. How much must the be log-likelihood improve from the last iteration before
+\item{...}{parameters that can be adjusted. See the \code{vignette("whatmph")} for more details.
+\itemize{
+\item threads. integer. The number of threads to use. Defaults to \code{getOption('durmod.threads')}
+\item iters. integer. How many iterations should we maximally run. Defaults to 12.
+\item ll.improve. numeric. How much must the be log-likelihood improve from the last iteration before
   termination. Defaults to 0.001
-\item newpoint.maxtime numeric. For how many seconds should a global search for a new point
+\item newpoint.maxtime. numeric. For how many seconds should a global search for a new point
   improving the likelihood be conducted before we continue with the best we have found. Defaults to
   120.
 \item callback. A
@@ -23,22 +24,21 @@ mphcrm.control(...)
   \code{mphcrm()} will return with the most recently estimated set
   of parameters. See the help on \code{\link{mphcrm.callback}} for
   information on the argument.
-\item trap.interrupt logical. Should interrupts be trapped so that \code{mphcrm} returns gracefully?
+\item trap.interrupt. logical. Should interrupts be trapped so that \code{mphcrm} returns gracefully?
 In this case the program will continue. Defaults to \code{interactive()}.
-\item method character. The method used for optimization. Currently 'BFGS' is supported, but it
-might work with 'L-BFGS-B' also, if memory is constrained.
+\item cluster. Cluster specification from package \pkg{parallel} or \pkg{snow}.
 }}
 }
 \value{
 list of control parameters suitable for the \code{control}
-  argument of \code{\link{mphcrm}}
+  argument of \code{\link{mphcrm}}.
 }
 \description{
 Modify the default estimation parameters for
   \code{\link{mphcrm}}
 }
 \note{
-There are other parameters too, I may document them later. Instead of cluttering
+There are more parameters documented in a vignette. Instead of cluttering
 the source code with constants and stuff required by various optimization routines, they
-have been put in this control list. You should perhaps not change them.
+have been put in this control list.
 }

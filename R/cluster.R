@@ -15,7 +15,7 @@ prepcluster <- function(dset,control) {
   ends <- sapply(cumeach, function(i) tail(which(spellidx < i),1))
   starts <- 1L+c(0L,ends[-K])
   spe <- c(spellidx,N+1)
-  csplit <- mapply(function(s,e) spellidx[s]:(spe[e+1]-1), starts,ends)
+  csplit <- mapply(function(s,e) spellidx[s]:(spe[e+1]-1), starts,ends,SIMPLIFY=TRUE)
 
   # csplit is a list. One element for each node.
   # Each element is a vector of observations which
@@ -86,7 +86,7 @@ mphloglik <- local({
     mc[[2L]] <- NULL  
     # get the other args
     args <- eval.parent(mc)
-    args[['control']] <- args[['control']][c('threads')]
+    args[['control']] <- args[['control']][c('threads','fishblock')]
     # put back dataset
     mc <- as.call(c(list(quote(durmod::.cloglik)),quote(dset), args))
     ret <- parallel::clusterCall(cluster, eval, mc)
