@@ -39,7 +39,15 @@ round(mphdist(fit[[1]]),6)
 mphmoments(fit[[1]])
 # and covariance matrix
 mphcov(fit[[1]])
+# and some pseudo R2
+pseudoR2(fit)
 
 ## ------------------------------------------------------------------------
 attributes(durdata)[c('means','cov')]
+
+## ------------------------------------------------------------------------
+summary(fit[[which.min(sapply(fit,AIC))]])
+
+## ----echo=FALSE----------------------------------------------------------
+def <- mphcrm.control()
 

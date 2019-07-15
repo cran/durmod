@@ -64,7 +64,16 @@ make a transition to a programme, we're already on it.
 Each row of the dataset has a \code{duration}, this is the time until the transition
 marked in \code{d} occurs.
 
-In our dataset, we we have an observation period of 400, and the individuals enter
+The rows of an individual are independent, they can be reordered, but the dataset
+must be sorted on individuals, i.e. the rows for an individual must be together. 
+I suggest using data tables (from the \pkg{data.table} package),
+then it is easy to sort on individuals: \code{setorder(data,id)}.
+If you have factors with hundreds or thousands of levels, it
+can be time-consuming to compute the Fisher-matrix. However, the algorithm which
+creates the Fisher matrix is more efficient if individuals with almost the
+same values for these factors (e.g. county, or company) are close to each other in the dataset.
+
+In our dataset, we have an observation period of 400, and the individuals enter
 the dataset at a random time in this period. When they reach the end of the observation
 period they are no longer observed. That means
 that some individuals do not exit the dataset by doing a transition, but with a \code{d=="none"}.
@@ -122,8 +131,9 @@ and the vectors \(\mu_j\) for \(j=1..n\).
 \section{Estimation}
 The estimation proceeds as follows. We start with \(n=1\), estimate
 the \(\beta\)s and the two \(\mu\)s.  Then we increase \(n\) to 2, let
-\(p_2\) be a small probability, and find a vector \(\mu_2\) which
-increases the likelihood.  This is used as starting point for a new likelihood maximization.
+\(p_2 = 0\), and find a vector \(\mu_2\) such that the derivative of the
+log-likelihood in the direction of positive \(p_2\) is positive.
+This is used as starting point for a new likelihood maximization.
 Then \(n\) is increased to \(3\), and we proceed in this fashion, adding masspoints to the
 distribution until we are no longer able to increase the likelihood.
 
@@ -215,6 +225,8 @@ round(mphdist(fit[[1]]),6)
 mphmoments(fit[[1]])
 # and covariance matrix
 mphcov(fit[[1]])
+# and some pseudo R2
+pseudoR2(fit)
 @ 
 The true values used to generate the dataset was 
 \code{job.x1=1}, \code{job.x2=-1}, \code{job.alpha=0.2}, \code{program.x1=1}, and
@@ -232,6 +244,40 @@ really have been an order of magnitude smaller (\(10^{-6}\) instead of \(10^{-5}
 the mixture distribution can be way off. It is good practice to inspect the
 mixture distribution for such extreme points, and go back to a previous iteration (which
 has slightly worse likelihood) without such extreme points.
+
+\subsection{Overparameterization?}
+We did note in \cite{GRK07} that picking the number of points which yields
+the lowest AIC yields satisfactory results. We did not, however, have any theoretical justification
+for doing this, and still don't. It is easy to look at the estimates with the lowest AIC:
+<<>>=
+summary(fit[[which.min(sapply(fit,AIC))]])
+@
+
+AIC is generally used to pick a model which is parsimonious, but
+still explains the data well, i.e. to avoid overparameterization. AIC
+has an interpretation as the distance between the model and reality,
+see e.g.\ \cite{BA02}. However, since the points are not found in a
+canonical order, the AIC is really not well defined in these
+models. Another estimation of the same data may find the points in a
+different order, with different log likelihoods along the way,
+resulting in another set of points having the lowest AIC in the new
+estimation.
+
+Also, keep in mind that the method of using a discrete distribution
+in this way is \emph{not} an ``approximation''. When the likelihood can't be improved by 
+adding more points, we have actually reached the likelihood which would result if we were to
+integrate with the true distribution, be it discrete or continuous. This is the content of
+\cite[Theorems 3.1 and 4.1]{lindsay83}. Thus, there is really no theoretical risk
+of adding ``too many'' points in the distribution, save for those which may result from
+numerical problems.
+
+The drawback with the method is that when the likelihood can't be improved by adding more
+points, the purely technical reason is that something degenerates, i.e. something breaks down,
+at least the Fisher matrix. That is, we will necessarily run into numerical problems at the 
+end of the estimation, and this may result in irrelevant points with very low probabilities
+being added, because they seem to increase the likelihood by some small amount due to numerical
+inaccuracies. This may be the case if the algorithm has run several iterations at the end
+which barely moved the likelihood.
 
 \section{More options}
 \subsection{Interval timing}
@@ -257,10 +303,24 @@ the specification \code{timing="none"} can be used. It will use a logit model fo
 transition probabilities.
 
 \subsection{Factors}
-\code{mphcrm} treats factors specially. There is, I think, nothing special to see, but
-internally \code{mphcrm} does not create a large model matrix filled with dummy variables. This means
-that factors with many levels is quite fast to estimate.
+\code{mphcrm} treats factors specially. There is, I hope, nothing special to see, but
+internally \code{mphcrm} does \emph{not} create a large model matrix filled with dummy variables. This means
+that factors with many levels are quite fast to estimate, there is no wasteful multiplication by zero.
 
+\code{mphcrm} removes factor levels as explanatory for a transition if
+they are not observed in any state with a risk for this transition.
+There can, however, be problems with what the contrasts/references
+should be if you interact a factor in one transition, but keeps it
+uninteracted in another transition. For the purpose of automatic
+removal of reference levels in factors, it is assumed that all terms
+in all transitions are present everywhere. If this problem occurs, you can
+create a copy with a different name, so it looks like different
+factors in different transitions. This may be fixed in a later
+version, if I find a sensible way to do it.
+
+<<echo=FALSE>>=
+def <- mphcrm.control()
+@ 
 \section{Control parameters}
 There are many control parameters. Rather than scattering more or less arbitrary constants 
 around the program, I have collected them here with their defaults. Some of them you may want to tinker with.
@@ -289,61 +349,95 @@ around the program, I have collected them here with their defaults. Some of them
   with a highly optimized and parallel BLAS, like mkl from Intel. See the R documentation for how
   to do this.
 
-\item{\code{iters=25}.} An integer. The number of iterations to perform. The estimation may stop earlier, if
+  In case you run on a cluster (see the \code{cluster} control parameter), the \code{threads} parameter is 
+  the number of threads on each node in the cluster. In this case, \code{threads} can be a vector of integers,
+  if you have different number of cpus on each node.
+\item{\code{iters=\Sexpr{def$iters}}.} An integer. The number of iterations to perform. The estimation may stop earlier, if
   neither the log likelihood \emph{nor} the entropy improves. 
 
-\item{\code{ll.improve=0.001}.} A numeric. The amount the log-likelihood must increase with to be considered an
+\item{\code{ll.improve=\Sexpr{def$ll.improve}}.} A numeric. The amount the log-likelihood must increase with to be considered an
   improvement. 
 
-\item{\code{e.improve=0.001}.} A numeric. The amount the entropy of the hazard distribution must change with
+\item{\code{e.improve=\Sexpr{def$e.improve}}.} A numeric. The amount the entropy of the hazard distribution must change with
   to be considered an improvement.
 
-\item{\code{newprob=0.001}.} A numeric. When searching for a new masspoint, a new support point is added to
-  the distribution with a small probability, then a search is done for a location for this probability 
-  which increases the likelihood. \code{newprob} is this small probability. 
-  If the search fails, the new probability is set to zero, and a search for a positive directional
-  derivative of the likelihood (in the direction of positive probability) is done.  The reason
-  we don't search for the derivative directly is that it tends to find unfavourable points, typically
-  duplicates of other points which happen to have a positive derivative due to numerical inaccuracy.
+\item{\code{gdiff=\Sexpr{def$gdiff}}.} A logical. When searching for a new point, should we try one with
+  zero probability, and positive derivative in the direction of positive probability? This usually
+  works, but in case of problems with finding new points, it can be set to \code{FALSE}, and a
+  search for a location with a small probability is done instead. See \code{newprob}.
+\item{\code{startprob=\Sexpr{def$startprob}}.} A numeric. When a location point has been found with zero probability,
+  we can not use a zero probability for further optimization due to our parametrization of probabilities
+  which do not allow it. We must set it to some small value \code{startprob}. Setting it too small
+  will make it difficult to move away from it.
+\item{\code{overshoot=\Sexpr{def$overshoot}}.} A numeric. When searching for a positive
+  directional derivative, this is the threshold we must be above. It is positive to avoid
+  marginally positive derivatives due to numerical inaccuracies.
+  
+\item{\code{newprob=\Sexpr{def$newprob}}.} A numeric. When searching for a new
+  masspoint with \code{gdiff=FALSE}, a new support point is added to
+  the distribution with a small probability, then a search is done for
+  a location for this probability which increases the
+  likelihood. \code{newprob} is this small probability.  If the search
+  fails, the new probability is set to zero, and a search for a
+  positive directional derivative of the likelihood (in the direction
+  of positive probability) is done.  
 
-\item{\code{minprob=1e-20}.} A numeric. Masspoints with probability below this are removed. 
+  If \code{mphcrm} after optimization seems to find a series of points with probability equal to
+  \code{newprob}, it has perhaps got stuck for numerical reasons. Try to increase it to find higher
+  probability points first.
 
-\item{\code{eqtol=0.0001}.} A numeric. It sometimes happens that two location points in the mixed proportional
+\item{\code{minprob=\Sexpr{def$minprob}}.} A numeric. Masspoints with probability below this are removed. 
+
+\item{\code{eqtol=\Sexpr{def$eqtol}}.} A numeric. It sometimes happens that two location points in the mixed proportional
   hazard distribution turns out to be equal. One of them can then be removed. \code{eqtol} is the
   threshold below which the \(\ell^\infty\) distance between two location points is so small that the
-  two points are thought to be equal. 
+  two points are thought to be equal. Should be lowered if the hazards generally are very small.
 
-\item{\code{maxtime=120}.} A numeric. When searching for a new location point, a global search algorithm 
-  from package \pkg{nloptr} is used. \code{maxtime} is its time limit in seconds. Should be increased if
-  \code{mphcrm} repeatedly complains about not being able to find a new point. However, when
-  there are no new points to be found at the end of the estimation, this will necessarily happen. 
-  See also \code{lowint}.
+\item{\code{newpoint.maxtime=\Sexpr{def$newpoint.maxtime}}.} A numeric. When
+  searching for a new location point, a global search algorithm from
+  package \pkg{nloptr} is used. \code{newpoint.maxtime} is its time limit in
+  seconds. Should be increased if \code{mphcrm} repeatedly complains
+  about not being able to find a new point. However, when there are no
+  new points to be found at the end of the estimation, this will
+  necessarily happen.  See also \code{lowint}.
+
+\item{\code{addmultiple=\Sexpr{def$addmultiple}}.} A positive
+  numeric. The algorithm tries to add more points to the distribution
+  without optimizing the structural parameters as long as the
+  improvement from the last point is larger than
+  \code{addmultiple}. If the improvement is less, all parameters are
+  optimized before more points are attempted. Setting
+  \code{addmultiple=1} or smaller may save some time if there are many
+  structural parameters, but setting it too small risks ending up with too many points
+  which later may be discarded, and possible convergence problems.
 
 \item{\code{callback=mphcrm.callback.}} A function. If the one-line diagnostic from \code{mphcrm} is insufficient,
   it is possible to write your own. It will replace the default callback (which you can call from your function).
   In this way you can e.g. get diagnostics on particular coefficients, save intermediate results
   to file, or other partakings. See \code{mphcrm.callback}.
 
-\item{\code{jobname="mphcrm"}.} A character string. The initial portion of the one-line diagnostic. Useful if you
+\item{\code{jobname="\Sexpr{def$jobname}"}.} A character string. The initial portion of the one-line diagnostic. Useful if you
   e.g. use \code{parallel::mclapply} to run several estimations in parallel. They can have individual names so
   you can see the progress. 
-
+\item{\code{tspec="\%T"}.} A character string. The format of the time stamp in the one-line diagnostic, as described
+  in \code{help(format.POSIXct)}. Use \code{"\%c"} to get both date and time.
+  
 \item{\code{trap.interrupt=interactive().}} A logical. If you decide to interrupt an interactive estimation before
   it has terminated, either because you don't want to wait, or because it seems to have run astray,
   the default behaviour for \code{mphcrm} is to catch the interrupt, and return gracefully with the
   result of the estimation so far. This behaviour can be switched off with \code{trap.interrupt=FALSE}.
 
-\item{\code{tol=0.0001}.} A numeric. The (absolute) tolerance for the log-likelihood maximization.
+\item{\code{tol=\Sexpr{def$tol}}.} A numeric. The (absolute) tolerance for the log-likelihood maximization.
 
-\item{\code{itfac=20}.} An integer. The maximum number of iterations in the BFGS-method is \code{itfac*K}, where
+\item{\code{itfac=\Sexpr{def$itfac}}.} An integer. The maximum number of iterations in the BFGS-method is \code{itfac*K}, where
   \code{K} is the number of parameters to estimate.
 
-\item{\code{fishblock=128}.} An integer. The Fisher matrix is created by calling the BLAS \code{dsyrk} with
+\item{\code{fishblock=\Sexpr{def$fishblock}}.} An integer. The Fisher matrix is created by calling the BLAS \code{dsyrk} with
   blocks of individual gradients. This is the size of the blocks. The optimal size depends on the BLAS version
   and details of your computing contraption. If memory use is an issue with a large number of coefficients
   to estimate, it can be lowered, typically to some other power of two.
 
-\item{\code{lowint=2}.} A numeric, possibly a vector of length the
+\item{\code{lowint=\Sexpr{def$lowint}}.} A numeric, possibly a vector of length the
   number of transitions.  When searching for the location of a new
   point, an interval centered at the mean of the old points is
   used. \code{lowint} is how far from the mean (in log units) the
@@ -351,13 +445,14 @@ around the program, I have collected them here with their defaults. Some of them
   analyzing where the location points may lie, as described in
   \cite{lindsay83II}, but does a brute force search in a
   (hyper)rectangle. Setting this parameter too high, increases the
-  risk of finding numerically unfavourable points, but if
-  \code{mphrcm} repeatedly complains about not being able to find new
-  points, it can be increased. See also \code{maxtime}.
+  risk of finding numerically unfavourable points, in particular large
+  ones (if \code{highint} is too large), but if \code{mphrcm}
+  repeatedly complains about not being able to find new points, it can
+  be increased. See also \code{newpoint.maxtime}.
 
-\item{\code{highint=2}.} A numeric. Like \code{lowint}, but to the right.
+\item{\code{highint=\Sexpr{def$highint}}.} A numeric. Like \code{lowint}, but to the right.
 
-\item{\code{method="BFGS"}.} A character string. The default is the
+\item{\code{method="\Sexpr{def$method}"}.} A character string. The default is the
   most robust method. In case of convergence problems, or for fun, one
   may try one of the local gradient based NLOPT-methods:
   \code{"TNEWTON\_PRECOND", "TNEWTON", "SLSQP", "MMA",
@@ -365,15 +460,56 @@ around the program, I have collected them here with their defaults. Some of them
   The Newton-methods can achieve a smaller gradient than BFGS.  For
   these, it could be a good idea to increase \code{itfac}.
 
-\item{\code{cluster=NULL.}} Cluster specification from package \pkg{parallel} or \pkg{snow}.
+\item{\code{cluster=NULL}.} Cluster specification from package \pkg{parallel} or \pkg{snow}.
   In addition to utilizing all the cores/cpus on a computer, \code{mphcrm} may also
   spread across several computers. It supports running on a cluster 
   from package \code{parallel} or \code{snow}. The dataset will be
   split among the cluster nodes, with approximately equally many observations on each. The nodes will
   then do their share of the likelihood computations. If using a cluster, the \code{threads} parameter will
-  be the number of cpus used on each cluster node.
-  In general, when using parallelization, one should make sure that the cpus are not overbooked and that
-  the nodes you are running on are approximately equally fast. 
+  be the number of cpus used on each cluster node. It can also be a vector, different number of threads
+  on each node, in which case the dataset will be split unevenly to approximately match the number
+  of threads.
+
+  If running on a professional cluster with a resource manager such as
+  SLURM, TORQUE or similar, it is usually possible to pick up
+  information about the cluster nodes from the resource manager,
+  typically from environment variables. With SLURM you can e.g. obtain
+  the number of allocated cpus on each node of your job with something
+  like \code{threads <- clusterEvalQ(cluster, as.integer(Sys.getenv("SLURM\_CPUS\_ON\_NODE")))}.  
+  In general, you will have to check local documentation for how this can be done, and how
+  to best set up a cluster with package parallel. (There can be some catches, in particular
+  with MPI which spin-waits to lower latency, and thus takes up a CPU for the ``dormant'' master process.)
+
+  In general, when using parallelization, one should make sure that
+  the cpus are not overbooked and that the nodes you are running on
+  are approximately equally fast. There is some overhead when
+  distributing the computation among many nodes, depending on how the
+  nodes are interconnected, and due to somewhat sub-optimal
+  implementations in package \pkg{parallel} which e.g. does not
+  utilize collective MPI-calls. \code{mphcrm} will usually run faster
+  if using \code{threads} on a single node, or few nodes, both because
+  the thread algorithm uses shared memory and because the division of
+  data between the threads are dynamic.
+
+\item{\code{nodeshares=NULL}.} A numeric vector. When running on a cluster, the default
+  is to share the data equally among the nodes, or in the case \code{threads} is a vector of
+  node-specific threads, equally among the threads on each node. If this is unsatisfactory, e.g.
+  because the nodes have different computing speeds, you can specify a vector of node specific shares
+  of the data set. 
+  
+  Say you have 4 nodes in the cluster, but the last two are half as fast as the first two, just specify
+  \code{nodeshares=c(2,2,1,1)}, and the last two nodes will get half as much data as the first two. If in
+  addition, the first two have 8 cpus, and the last two have four, specify:
+  \code{threads=c(8, 8, 4, 4)}, and \code{nodeshares=c(2*8, 2*8, 4, 4)}. The entries in the \code{nodeshares}
+  vector will be divided by their sum, so it is not necessary that they sum to 1, it is their relative
+  sizes which matter.
+
+\item{\code{fisher=\Sexpr{def$fisher}}.} A logical. Should the Fisher matrix be computed? You will normally
+  want this, it is used to compute the standard errors. However, it may take some time if you have
+  a large number of covariates. If you do not need standard errors, e.g.\ if you do a bootstrap or Monte Carlo
+  simulation or similar, you may switch off the computation of the Fisher matrix and save some time.
+\item{\code{gradient=\Sexpr{def$gradient}}.} A logical. As \code{fisher}, but for the gradient. I doubt much 
+  time can be saved by switching this off.
 \end{itemize}
 
 \bibliographystyle{apalike}

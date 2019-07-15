@@ -6,16 +6,34 @@ prepcluster <- function(dset,control) {
   cluster <- control$cluster
   
   spellidx <- dset$spellidx+1
-  K <- length(parallel::clusterCall(cluster, function() 1))
-  if(K == 1) {message('cluster of size 1 ignored'); return()}
-#  K <- 7
-  # we should find a set of spells so that dset is evenly divided
   N <- spellidx[length(spellidx)]
-  cumeach <- (1:K)/K*N
+
+  K <- length(cluster)
+  threads <- as.integer(rep(control$threads,length.out=K))
+  if(is.null(control$nodeshares)) {
+    shares <- threads
+  } else {
+    if(any(control$nodeshares < 0) || sum(control$nodeshares) == 0) stop('negative or zero nodeshares')
+    shares <- rep(control$nodeshares,length.out=K)
+  }
+  cumeach <- cumsum(shares)/sum(shares) * N
+
+  # we should find a set of spells so that dset is evenly divided
+
   ends <- sapply(cumeach, function(i) tail(which(spellidx < i),1))
+  # make sure there is at least one
+  count <- diff(c(0,ends))
+  for(i in rev(seq_along(count)[-1])) {
+    borrow <- 1 - count[i]
+    if(borrow <= 0) next
+    count[i-1] = count[i-1] - borrow
+    count[i] = 1
+  }
+  if(count[1] <= 0) {warning("There are more nodes than individuals, ignoring parallelization"); return()}
+  ends <- cumsum(count)
   starts <- 1L+c(0L,ends[-K])
   spe <- c(spellidx,N+1)
-  csplit <- mapply(function(s,e) spellidx[s]:(spe[e+1]-1), starts,ends,SIMPLIFY=TRUE)
+  csplit <- mapply(function(s,e) spellidx[s]:(spe[e+1]-1), starts,ends,SIMPLIFY=FALSE)
 
   # csplit is a list. One element for each node.
   # Each element is a vector of observations which
@@ -52,7 +70,7 @@ prepcluster <- function(dset,control) {
       m
     })
     list(data=data,d=d, timing=dset$timing, id=id, 
-         spellidx=NULL, duration=duration, state=state, riskset=dset$riskset)
+         spellidx=NULL, duration=duration, state=state, risksets=dset$risksets)
   })
 
   # Then add the id and spellidx in each entry
@@ -65,6 +83,7 @@ prepcluster <- function(dset,control) {
   parallel::clusterEvalQ(cluster, library(durmod))
   parallel::clusterApply(cluster,dsplit,function(dset) {assign('dset', dset, 
                                                                environment(durmod::.cloglik)); NULL})
+  parallel::clusterApply(cluster,threads, function(thr) {assign('threads',thr,environment(durmod::.cloglik)); NULL})
   assign('cluster',cluster,environment(mphloglik))
 }
 
@@ -83,10 +102,10 @@ mphloglik <- local({
     }
     mc[[1L]] <- quote(list)
     # ditch dataset
-    mc[[2L]] <- NULL  
+    mc <- mc[-2L]
     # get the other args
     args <- eval.parent(mc)
-    args[['control']] <- args[['control']][c('threads','fishblock')]
+    args[['control']] <- args[['control']][c('fishblock')]
     # put back dataset
     mc <- as.call(c(list(quote(durmod::.cloglik)),quote(dset), args))
     ret <- parallel::clusterCall(cluster, eval, mc)
@@ -104,10 +123,12 @@ mphloglik <- local({
 #' @export
 .cloglik <- local({
   dset <- NULL
+  threads <- NULL
   function(...) {
     mc <- match.call()
     mc[[1L]] <- cloglik
     mc[[2L]] <- dset
+    mc[['control']]$threads <- threads
     eval.parent(mc)
   }
 })

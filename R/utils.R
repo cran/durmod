@@ -10,6 +10,7 @@
 #' # make it singular
 #' x[,2] <- x[,3]+x[,5]
 #' geninv(x)
+#' @return A matrix of the same dimension as \code{X} is returned, the Moore-Penrose generalized inverse.
 #' @export
 geninv <- function(X, tol=.Machine$double.eps) {
   if (length(dim(X)) > 2L || !is.numeric(X)) 
@@ -145,6 +146,7 @@ mphcov.log <- function(pset) {
 #' The Fisher matrix, typically from \code{opt[[1]]$fisher}, where \code{opt} is returned
 #' from \code{\link{mphcrm}}.
 #' @param tol tolerance for \link{geninv}
+#' @return A named vector of standard errors is returned.
 #' @export
 se <- function(x,tol=.Machine$double.eps) {
   if(is.matrix(x)) return(sqrt(diag(geninv(x,tol))))
@@ -152,11 +154,35 @@ se <- function(x,tol=.Machine$double.eps) {
   stop("Can't find a matrix to invert")
 }
 
+#' Calculate various pseudo R2's 
+#'
+#' @description
+#' There are several variants of pseudo \eqn{R^2} that can be computed for a likelihood
+#' estimation. They all relate the log likelihood of the estimated model to the log likelihood
+#' of the null model.
+#'
+#' The ones included here are McFadden's, Adjusted McFadden's, Cox & Snell's, and Nagelkerke, Cragg, and Uhler's.
+#' 
+#' @param opt returned value from \code{\link{mphcrm}}.
+#' @return
+#' A matrix is returned, with one row for each iteration containing the various pseudo \eqn{R^2}s.
+#' @export
+pseudoR2 <- function(opt) {
+  nullmod <- opt[['nullmodel']]
+  t(sapply(opt[-length(opt)], function(op) {
+    c(mcfadden=1-op$value/nullmod$value,
+      adjmcfadden=1-(op$value - length(unlist(op$par)))/nullmod$value,
+      coxsnell=1-exp((nullmod$value-op$value)*2/op$nspells),
+      ncu=(1-exp((nullmod$value-op$value)*2/op$nspells))/(1-exp(nullmod$value*2/op$nspells)))
+  }))
+}
+
 #' Prettyprint a time interval
 #' @description
-#' Prints a time in seconds as e.g. \code{"3m4s"}.
+#' Converts a time in seconds to a short string e.g. \code{"3m4s"}.
 #' @param t
 #' numeric. time in seconds.
+#' @return A character string is returned.
 #' @examples
 #' timestr(1.3)
 #' timestr(73)
@@ -177,4 +203,31 @@ timestr <- function(t) {
     str <- sprintf('%.1fs',s+dec)
   }
   str
+}
+
+#' Collapse levels of a factor
+#' @description
+#' Combines levels of a factor into new levels
+#' @param f
+#' factor.
+#' @param newlevels
+#' list. The names of \code{newlevels} are the new levels. Each list element is a list
+#' of old levels in the factor \code{f} which should be combined into the new level
+#' @examples
+#' # create a factor with levels 30:60
+#' f <- factor(sample(30:60, 200, replace=TRUE))
+#' # combine 35-40 into a single level, 41-50 into a single level, and 51-60 into a single level
+#  # levels 30-34 are left as is. Note the backticks, necessary because these must be parsed as names.
+#' g <- smashlevels(f, list(`35-40` = 35:40, `41-50` = 41:50, `51-60` = 51:60))
+#' table(g)
+#' # If the syntax permits, the backticks can be avoided.
+#' h <- smashlevels(f, list(young=30:34, pushing40 = 35:40, pushing50 = 41:50, fossilized = 51:120))
+#' table(h)
+#' @export
+smashlevels <- function(f, newlevels) {
+  f <- as.factor(f)
+  olev <- levels(f)
+  for(nl in names(newlevels)) olev[match(newlevels[[nl]], olev)] <- nl
+  levels(f) <- olev
+  f
 }

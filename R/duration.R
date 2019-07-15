@@ -64,9 +64,7 @@
 #' \itemize{
 #' \item \code{"exact"}. The timing is exact, the transition occured at the end of the observation interval.
 #' \item \code{"interval"}. The transition occured some time during the observation interval. This model
-#'   can be notoriously hard to estimate due to unfavourable numerics. It could be worthwhile to
-#'   lower the control parameter \code{ll.improve} to 0.0001 or something, to ensure it does not
-#'   give up to early.
+#'   can be notoriously hard to estimate due to unfavourable numerics. 
 #' \item \code{"none"}. There is no timing, the transition occured, or not. A logit model is used.
 #' }
 #' @param risksets
@@ -132,7 +130,7 @@ mphcrm <- function(formula,data,risksets=NULL,
   mf$drop.unused.levels <- TRUE
   mf[[1L]] <- quote(model.frame)
 
-  dataset <- mymodelmatrix(F,mf)
+  dataset <- mymodelmatrix(F,mf,risksets)
 
   dataset$timing <- timing
   id <- dataset$id
@@ -145,49 +143,6 @@ mphcrm <- function(formula,data,risksets=NULL,
   dataset$spellidx <- c(0L,which(diff(as.integer(id))!=0),length(id))
   dataset$nspells <- length(dataset$spellidx)-1L
 
-  state <- dataset$state
-  hasriskset <- !is.null(risksets)
-  if(hasriskset && is.null(state)) 
-    warning("Riskset is specified, but no state S(). All risks are assumed to be present.")
-  if(is.null(state)) hasriskset <- FALSE
-
-  if(hasriskset) {
-    if(is.factor(state)) {
-      m <- match(levels(state), names(risksets))
-      if(anyNA(m)) stop(sprintf('level %s of state is not in the riskset names\n',levels(state)[is.na(m)]))
-      # recode state to integer
-      state <- m[state]
-      dataset$state <- state
-    } else {
-      srange <- range(state)
-      if(srange[1] != 1) stop('smallest state must be 1 (index into riskset)')
-      if(srange[2] > length(risksets)) {
-        stop(sprintf('max state is %d, but there are only %d risksets\n',srange[2],length(risksets)))
-      }
-    }
-    # recode risksets from transition level names to integers
-    tlevels <- dataset$tlevels
-    risksets <- lapply(risksets, function(set) {
-      ind <- match(set,tlevels)
-      if(anyNA(ind)) stop(sprintf('Non-existent transition %s in risk set\n',set[is.na(ind)]))
-      ind
-    })
-
-    # check if transitions are taken which are not in the riskset
-    d <- dataset[['d']]
-
-    badtrans <- mapply(function(dd,r) dd != 0 && !(dd %in% r), d, risksets[state])
-    if(any(badtrans)) {
-      n <- which(badtrans)[1]
-      stop(sprintf("In observation %d(id=%d), a transition to %s is taken, but the riskset of the state(%d) does not allow it",
-                   n, id[n], tlevels[d[n]], state[n]))
-    }
-
-    dataset$riskset <- risksets
-  } else {
-    dataset$state <- 0L
-    dataset$riskset <- list()
-  }
 
   pset <- makeparset(dataset,1)
 
@@ -204,14 +159,14 @@ mphcrm <- function(formula,data,risksets=NULL,
 #'
 #' @description
 #' Modify the default estimation parameters for
-#'   \code{\link{mphcrm}}
+#'   \code{\link{mphcrm}}.
 #' @param ...
 #' parameters that can be adjusted. See the \code{vignette("whatmph")} for more details.
 #' \itemize{
-#' \item threads. integer. The number of threads to use. Defaults to \code{getOption('durmod.threads')}
+#' \item threads. integer. The number of threads to use. Defaults to \code{getOption('durmod.threads')}.
 #' \item iters. integer. How many iterations should we maximally run. Defaults to 12.
-#' \item ll.improve. numeric. How much must the be log-likelihood improve from the last iteration before
-#'   termination. Defaults to 0.001
+#' \item ll.improve. numeric. How much must the log-likelihood improve from the last iteration before
+#'   termination. Defaults to 0.001.
 #' \item newpoint.maxtime. numeric. For how many seconds should a global search for a new point
 #'   improving the likelihood be conducted before we continue with the best we have found. Defaults to
 #'   120.
@@ -228,26 +183,31 @@ mphcrm <- function(formula,data,risksets=NULL,
 #' \item cluster. Cluster specification from package \pkg{parallel} or \pkg{snow}.
 #' }
 #' @note
-#' There are more parameters documented in a vignette. Instead of cluttering
+#' There are more parameters documented in the \code{vignette("whatmph")}. Some of them
+#' can be useful. Instead of cluttering
 #' the source code with constants and stuff required by various optimization routines, they
 #' have been put in this control list. 
 #' @return
-#' list of control parameters suitable for the \code{control}
+#' List of control parameters suitable for the \code{control}
 #'   argument of \code{\link{mphcrm}}.
 #' @export
 mphcrm.control <- function(...) {
-  ctrl <- list(iters=25,threads=getOption('durmod.threads'),gradient=TRUE, fisher=TRUE, hessian=FALSE, 
-               method='BFGS', gdiff=FALSE, minprob=1e-20, eqtol=1e-4, newprob=1e-3, jobname='mphcrm', 
+  ctrl <- list(iters=50,threads=getOption('durmod.threads'),gradient=TRUE, fisher=TRUE, hessian=FALSE, 
+               method='BFGS', gdiff=TRUE, minprob=1e-20, eqtol=1e-4, newprob=1e-4, jobname='mphcrm', 
+               overshoot=0.001,
+               startprob=1e-4,
                ll.improve=1e-3, e.improve=1e-3,
                trap.interrupt=interactive(),
                tspec='%T', newpoint.maxtime=120,
-               lowint=2,highint=2,
+               lowint=4,highint=2,
                tol=1e-4,
                method='BFGS',
                itfac=20L,
                fishblock=128L,
+               addmultiple=Inf,
                callback=mphcrm.callback,
-               cluster=NULL)
+               cluster=NULL,
+               nodeshares=NULL)
   args <- list(...)
   fullargs <- names(ctrl)[pmatch(names(args), names(ctrl))]
   bad <- names(args)[is.na(fullargs)]
@@ -265,7 +225,7 @@ mphcrm.control <- function(...) {
 #' a string which identifies which step in the algorithm it is called from. \code{fromwhere=='full'} means
 #' that it is a full estimation of all the parameters. There are also other codes, when adding a point,
 #' when removing duplicate points. When some optimization is completed it is called with the
-#' return status from \code{\link{optim}} (and in some occasions from \code{\link[nloptr]{nloptr}}.
+#' return status from \code{\link{optim}} (and in some occasions from \code{\link[nloptr]{nloptr}}).
 #'
 #' @param opt
 #' Typically the result of a call to \code{\link{optim}}.
@@ -312,7 +272,7 @@ mphcrm.callback <- local({
       print(list(...)[['eqpoints']])
     } else {
       if(is.numeric(opt$convergence) && opt$convergence != 0) {
-        if(fromwhere != 'newpoint' || !(opt$convergence %in% c(2))) {
+        if(fromwhere != 'newpoint' || !(opt$convergence %in% c(2,5))) {
           mess <- if(is.null(opt$message)) '' else opt$message
           cat(sprintf('%s %s %s: convergence failure %.4f, %d %s\n',
                       jobname, format(now,control$tspec), fromwhere,
@@ -349,7 +309,7 @@ pointiter <- function(dataset,pset,control) {
     }
     -mphloglik(dataset,pset,control=control)
   }
-  opt0 <- optim(runif(length(pset$parset),-4,-1), LL0,method='BFGS',dataset=dataset,pset=pset)
+  opt0 <- optim(runif(length(pset$parset),-10,0), LL0,method='BFGS',dataset=dataset,pset=pset)
 #  message('zero model: '); print(opt0$par)
   for(i in seq_along(pset$parset)) {
     pset$parset[[i]]$mu[] <- opt0$par[i]
@@ -389,6 +349,11 @@ pointiter <- function(dataset,pset,control) {
         if(improve && i < control$iters) pset <- addpoint(dataset,newopt$par,newopt$value,control)
       }
       if(!improve) opt <- opt[-1]
+      badset <- badpoints(opt[[1]]$par,control)
+      if(isTRUE(attr(badset, 'badremoved'))) {
+        opt[[1]]$par <- optfull(dataset,badset,control)
+      }
+
     },
     error=function(e) {
       assign('intr',TRUE,environment(sys.function()))
@@ -402,17 +367,9 @@ pointiter <- function(dataset,pset,control) {
       if(!control$trap.interrupt) stop('interrupt')
  #     try(control$callback('interrupt', iopt, dataset, control))
       warning(e, "returning most recent estimate ")
+      message('... interrupt cleanup ...')
     },
     finally=if(intr) opt <- iopt)
-
-  if(!intr) {
-    badset <- badpoints(opt[[1]]$par,control)
-    if(isTRUE(attr(badset, 'badremoved'))) {
-      cat(sprintf('redo bad prob, ll=%.6f\n',opt[[1]]$value))
-      opt[[1]]$par <- optfull(dataset,badset,control)
-      cat(sprintf('new ll=%.6f\n',opt[[1]]$value))
-    }
-  }
 
   structure(opt,class='mphcrm.list')
 }
@@ -443,12 +400,21 @@ rescale <- function(dataset, opt) {
 }
 
 optprobs <- function(dataset,pset,control) {
+  val <- flatten(pset)
+  probpos <- grep('^pargs[0-9]*$',names(val))
+  
   pfun <- function(a) {
     pset$pargs[] <- a
     -mphloglik(dataset,pset,control=control)
   }
-#  message('optimize probs')
-  aopt <- optim(pset$pargs,pfun,method='BFGS',control=list(trace=0,REPORT=1,factr=10))
+  gpfun <- function(a) {
+    val[probpos] <- a
+    -attr(mphloglik(dataset,unflatten(val),dogradient=TRUE, control=control),'gradient')[probpos]
+  }
+
+  # go all the way with the relative tolerance, we need to get out of bad places.
+  aopt <- optim(pset$pargs,pfun,gpfun,method='BFGS',
+                control=list(trace=0,REPORT=1,maxit=max(200,10*(length(probpos))), reltol=1e-14))
 #  message('probs:',sprintf(' %.7f',a2p(aopt$par)), ' value: ',aopt$value)
   pset$pargs[] <- aopt$par
   control$callback('prob',aopt,dataset,control)
@@ -469,11 +435,12 @@ optdist <- function(dataset,pset,control) {
     -attr(mphloglik(dataset,unflatten(val),dogradient=TRUE, control=control),'gradient')[distpos]
   }
 
-  dopt <- optim(val[distpos],dfun,gdfun,method='BFGS',control=list(trace=0,REPORT=100))
+  dopt <- optim(val[distpos],dfun,gdfun,method='BFGS',
+                control=list(trace=0,REPORT=1,maxit=max(200,10*length(distpos)), reltol=1e-14))
   val[distpos] <- dopt$par
   dopt$par <- unflatten(val)
   control$callback('dist',dopt,dataset,control)
-  pset
+  structure(dopt$par,value=-dopt$value)
 }
 
 newpoint <- function(dataset,pset,value,control) {
@@ -500,24 +467,27 @@ newpoint <- function(dataset,pset,value,control) {
   args <- runif(length(low),0,1)*(high-low) + low
   muopt <- nloptr::nloptr(args, fun,lb=low, ub=high, gdiff=gdiff,
                           opts=list(algorithm='NLOPT_GN_ISRES',
-                                    stopval=if(gdiff) -control$ll.improve else -value-control$ll.improve,
+                                    stopval=if(gdiff) -control$overshoot else -value-control$ll.improve,
                                     xtol_rel=0, xtol_abs=0,
                                     maxtime=control$newpoint.maxtime,
+                                    ranseed=sample(.Machine$integer.max,1),
                                     maxeval=10000*length(args),population=20*length(args)))
 
-  if(!gdiff && !(muopt$status %in% c(0,2))) {
+  if(!(muopt$status %in% c(0,2))) {
     muopt$convergence <- muopt$status
     muopt$value <- muopt$objective 
     control$callback('newpoint',muopt,dataset,control)
-    # that one failed, try gdiff instead, broader interval
+    # that one failed, try broader interval
     newset$pargs[] <- p2a(c(pr,0))
     gdiff <- TRUE
-    muopt <- nloptr::nloptr(args, fun, lb=low-2, ub=high+2,gdiff=TRUE,
-                            opts=list(algorithm='NLOPT_GN_ISRES',stopval=-control$ll.improve,
+    muopt <- nloptr::nloptr(muopt$solution, fun, lb=low-control$lowint, ub=high+control$highint,gdiff=TRUE,
+                            opts=list(algorithm='NLOPT_GN_ISRES',stopval=-control$overshoot,
                                       xtol_rel=0, xtol_abs=0,
                                       maxtime=control$newpoint.maxtime,
+                                      ranseed=sample(.Machine$integer.max,1),
                                       maxeval=10000*length(args),population=20*length(args)))
   }
+  muopt$eval_f <- NULL # remove, it may contain a big environment, so unsuitable to save
   muopt$value <- muopt$objective 
   muopt$convergence <- muopt$status
   control$callback('newpoint',muopt,dataset,control)
@@ -526,8 +496,8 @@ newpoint <- function(dataset,pset,value,control) {
     newset$parset[[i]]$mu[np] <- muopt$solution[i]
   }
   if(gdiff) {
-    #  newpr <- newpr/sum(newpr)
-    newset$pargs[] = p2a(c((1-1e-5)*pr,1e-5))
+    # set a tiny probability to start with, 0 can't be used, the parameter is then -Inf
+    newset$pargs[] = p2a(c((1-control$startprob)*pr,control$startprob))
   }
   optprobs(dataset,newset,control)
 }
@@ -558,6 +528,8 @@ badpoints <- function(pset,control) {
 
   if(!all(okpt)) {
     control$callback('removepoints',pset,NULL,control,remove=!okpt)
+  } else {
+    return(structure(pset,badremoved=FALSE))
   }
 
   p <- p[okpt]
@@ -606,13 +578,19 @@ optfull <- function(dataset, pset, control) {
     args <- flatten(pset)
     lb <- rep(-Inf,length(args))
     ub <- rep(Inf,length(args))
-    nlopt <- nloptr::nloptr(args, LL, gLL, lb=lb, ub=ub, 
+    fun <- function(args,skel,dataset,ctrl) {
+      pset <- unflatten(args,skel)
+      val <- mphloglik(dataset,pset,dogradient=TRUE,control=ctrl) 
+      list(objective=-val, gradient=-attr(val,'gradient'))
+    }
+    nlopt <- nloptr::nloptr(args, fun, lb=lb, ub=ub, 
                             skel=attr(args,'skeleton'), ctrl=control, dataset=dataset,
                             opts=list(algorithm=method,
                                       maxeval=control$itfac*length(args), ftol_abs=control$tol, xtol_rel=0))
+    nlopt$eval_f <- NULL
     nlopt$par <- unflatten(nlopt$solution,attr(args,'skeleton'))
     nlopt$value <- nlopt$objective
-    nlopt$convergence <- if(nlopt$status==3) 0 else nlopt$status
+    nlopt$convergence <- if(nlopt$status %in% c(1,3)) 0 else nlopt$status
     return(nlopt)
 }
 
@@ -632,14 +610,14 @@ addpoint <- function(dataset,pset,value,control) {
   # optimize probabilities
   newset <- pset
   control$minprob <- 0
-  for(i in 1:5) {
-    newset <- newpoint(dataset,newset,value,control)
+  pval <- value
+  repeat {
+    newset <- newpoint(dataset,newset,pval,control)
     newset <- optdist(dataset,newset,control)
-    newset <- badpoints(newset,control)
-    if(!isTRUE(attr(newset,'badremoved'))) break
-    # optimize dist after removing point(s)
-#    newset <- unflatten(optfull(dataset,newset,control)$par)
-  } 
+    val <- attr(newset,'value')
+    if(val <= pval+abs(control$addmultiple)) break
+    pval <- val
+  }
   newset
 }
 
@@ -713,15 +691,15 @@ ml <- function(dataset,pset,control) {
 #' p
 #' # convert back
 #' p2a(p)
-#' 
+#' @return \code{a2p} returns a vector probabilities with sum 1.
 #' @export
 a2p <- function(a) {b <- c(0,a); p <- exp(b)/sum(exp(b)); ifelse(is.na(p),1,p)}
-##' @export
-#a2logp <- function(a) {b <- c(0,a); logp <- b - logsumofexp(b,0); ifelse(is.na(logp),0,logp)}
 
 #' @rdname a2p
 #' @param p
 #' a vector of probabilities with sum(p) = 1
+#' @return
+#' \code{p2a} returns a vector of parameters.
 #' @export
 p2a <- function(p) log(p/p[1])[-1]
 
@@ -745,7 +723,7 @@ makeparset <- function(dataset,npoints,oldset) {
 }
 
 
-mymodelmatrix <- function(formula,mf) {
+mymodelmatrix <- function(formula,mf,risksets) {
 
   #### Handle the specials ####
   mt <- terms(formula, specials=c('ID','D', 'S', 'C'))
@@ -779,11 +757,8 @@ mymodelmatrix <- function(formula,mf) {
   else
     duration <- rep(1,nrow(mf))
 
-  state <- NULL
-  if(length(Ilist$S)) {
-    state <- mf[[as.character(Ilist$S)]]
-    if(!is.factor(state)) state <- as.integer(state)
-  }
+
+
   # and the repsonse, convert to factor with appropriate levels
   orig.d <- model.response(mf)
   df <- as.factor(orig.d)
@@ -813,6 +788,52 @@ mymodelmatrix <- function(formula,mf) {
                                 trnames[is.na(enm)]))
   }  
 
+  state <- NULL
+  if(length(Ilist$S)) {
+    state <- mf[[as.character(Ilist$S)]]
+    if(!is.factor(state)) state <- as.integer(state)
+  }
+
+  hasriskset <- !is.null(risksets)
+  if(hasriskset && is.null(state)) 
+    warning("Riskset is specified, but no state S(). All risks are assumed to be present.")
+  if(is.null(state)) hasriskset <- FALSE
+
+  if(hasriskset) {
+    if(is.factor(state)) {
+      m <- match(levels(state), names(risksets))
+      if(anyNA(m)) stop(sprintf('level %s of state is not in the riskset names\n',levels(state)[is.na(m)]))
+      # recode state to integer
+      state <- m[state]
+    } else {
+      srange <- range(state)
+      if(srange[1] != 1) stop('smallest state must be 1 (index into riskset)')
+      if(srange[2] > length(risksets)) {
+        stop(sprintf('max state is %d, but there are only %d risksets\n',srange[2],length(risksets)))
+      }
+    }
+    # recode risksets from transition level names to integers
+    risksets <- lapply(risksets, function(set) {
+      ind <- match(set,tlevels)
+      if(anyNA(ind)) stop(sprintf('Non-existent transition %s in risk set\n',set[is.na(ind)]))
+      ind
+    })
+
+    # check if transitions are taken which are not in the riskset
+
+    badtrans <- mapply(function(dd,r) dd != 0 && !(dd %in% r), d, risksets[state])
+    if(any(badtrans)) {
+      n <- which(badtrans)[1]
+      stop(sprintf("In observation %d(id=%d), a transition to %s is taken, but the riskset of the state(%d) does not allow it",
+                   n, id[n], tlevels[d[n]], state[n]))
+    }
+
+  } else {
+    state <- 0L
+    risksets <- list()
+  }
+
+
   transitions <- nlevels(df)-ztrans
   cls <- attr(terms(mf),'dataClasses')
 
@@ -821,13 +842,15 @@ mymodelmatrix <- function(formula,mf) {
   # and a list of factors
   data <- lapply(seq_len(transitions), function(t) {
     
+    # name of this transition
+    thistr <- levels(df)[t+ztrans]
+
     # find the formula for
     # this transition. Add in all the conditional covariates for this transition
     ff <- pureF
-    tnam <- levels(df)[t+ztrans]
-    if(tnam %in% names(cvars)) {
+    if(thistr %in% names(cvars)) {
       # awkward, cvars may have duplicate names if C(foo, a+b) + C(foo,d+c)
-      for(i in (which(names(cvars) %in% tnam)))
+      for(i in (which(names(cvars) %in% thistr)))
         ff <- update(ff, as.formula(bquote(. ~ . + .(cvars[[i]]))))
     } 
 
@@ -846,11 +869,28 @@ mymodelmatrix <- function(formula,mf) {
 
     attr(mt,'factors') <- fact[,keep,drop=FALSE]
     attr(mt,'intercept') <- 0
-    # create model matrix from the constructed terms
-    mat <- t(model.matrix(mt,mf))
 
+    # create model matrix from the constructed terms
+    mat <- model.matrix(mt,mf)
+
+    # which observations are under risk for this transition?
+    if(length(risksets)) {
+      riskobs <- sapply(risksets[state], function(r) t %in% r)
+    } else riskobs <- seq_along(df)
+
+    # remove constant covariates
+    var0 <- apply(mat[riskobs,,drop=FALSE],2,var) == 0
+    if(any(var0)) {
+      message(sprintf('*** Covariate %s is constant for transition %s, removing\n',
+                      colnames(mat)[var0], thistr))
+      mat <- mat[,!var0,drop=FALSE]
+    }
+
+    mat <- t(mat)
+    
 # then the factor related stuff
-    faclist <- lapply(colnames(fact), function(term) {
+
+   faclist <- lapply(colnames(fact), function(term) {
       codes <- fact[,term]
 
       contains <- rownames(fact)[codes > 0]
@@ -861,23 +901,46 @@ mymodelmatrix <- function(formula,mf) {
       # interact all the factors in the term
       # but some are with contrasts, some are not. The code is 2 if no contrast, 1 otherwise
       # make a list of the factors
+      # Here's the interaction with a covariate.
+      x <- NULL
+      if(any(!isfac))
+        x <- as.matrix(Reduce('*',eval(as.call(lapply(c('list',contains[!isfac]),as.name)),
+                                       mf,environment(formula))))
+      if(is.null(x)) x <- numeric(0)
 
       codes <- codes[contains[isfac]]
       flist <- eval(as.call(lapply(c('list',contains[isfac]),as.name)), mf,environment(formula))
+
       # remove a reference level if contrasts
       fl <- mapply(function(f,useall) {
         if(useall) return(f)
-        factor(f,levels=c(NA,levels(f)[-1]))
+        # reference is the first level that is observed
+        factor(f,exclude=levels(factor(f[riskobs]))[1])
       }, flist, codes==2, SIMPLIFY=FALSE)
 
+      # interact them
       iaf <- Reduce(`:`, fl)
-      if(any(!isfac)) {
-        attr(iaf,'x') <- as.matrix(Reduce('*',eval(as.call(lapply(c('list',contains[!isfac]),as.name)),
-                                                   mf,environment(formula))))
-      } else {
-        attr(iaf,'x') <- numeric(0)
+      # we then remove interaction levels which are never observed/constant in a state
+      # which can make this transition
+      f <- factor(iaf[riskobs])
+      xx <- if(length(x)) x[riskobs] else 1
+      flev <- levels(f)
+      if(length(flev) == 0) {
+        message(sprintf("*** Removing %s from transition %s, no variation\n",term,thistr))
+        return(NULL) #no more levels, discard entire factor
       }
-      iaf
+      val <- numeric(length(f));
+      excl <- flev[sapply(flev, function(ll) {
+        idx <- which(f==ll)
+        if(!length(idx)) return(TRUE)
+        val[idx] <- if(length(xx)>1) xx[idx] else 1
+        var(val) == 0
+      })]
+      if(length(excl)) 
+        message(sprintf("*** Removing level %s from %s in transition %s, no variation\n",excl,term,thistr))
+      iaf <- factor(iaf,levels=flev,exclude=excl)
+#      iaf <- factor(iaf,levels=levels(factor(iaf[riskobs])))
+      structure(iaf,x=x)
     })
 
     names(faclist) <- colnames(fact)
@@ -899,6 +962,7 @@ mymodelmatrix <- function(formula,mf) {
     structure(list(mat=scalemat,faclist=faclist), recode=list(offset=offset,scale=scale))
   })
   names(data) <- tlevels
-  dataset <- list(data=data, d=d, nobs=nrow(mf), tlevels=tlevels,duration=duration,id=id,state=state)
+  dataset <- list(data=data, d=d, nobs=nrow(mf), tlevels=tlevels,duration=duration,id=id,state=state,
+                  risksets=risksets)
   dataset
 }
