@@ -129,8 +129,7 @@ mphcrm <- function(formula,data,risksets=NULL,
   mf <- mf[c(1L, m)]
   mf$drop.unused.levels <- TRUE
   mf[[1L]] <- quote(model.frame)
-
-  dataset <- mymodelmatrix(F,mf,risksets)
+  dataset <- mymodelmatrix(F,mf,risksets,parent.frame())
 
   dataset$timing <- timing
   id <- dataset$id
@@ -192,8 +191,8 @@ mphcrm <- function(formula,data,risksets=NULL,
 #'   argument of \code{\link{mphcrm}}.
 #' @export
 mphcrm.control <- function(...) {
-  ctrl <- list(iters=50,threads=getOption('durmod.threads'),gradient=TRUE, fisher=TRUE, hessian=FALSE, 
-               method='BFGS', gdiff=TRUE, minprob=1e-20, eqtol=1e-4, newprob=1e-4, jobname='mphcrm', 
+  ctrl <- list(iters=50,threads=getOption('durmod.threads'),gradient=TRUE, fisher=TRUE,
+               method='BFGS', gdiff=TRUE, minprob=1e-20, eqtol=1e-3, newprob=1e-4, jobname='mphcrm', 
                overshoot=0.001,
                startprob=1e-4,
                ll.improve=1e-3, e.improve=1e-3,
@@ -206,6 +205,8 @@ mphcrm.control <- function(...) {
                fishblock=128L,
                addmultiple=Inf,
                callback=mphcrm.callback,
+               numgrad=FALSE,
+               hessian=FALSE,
                cluster=NULL,
                nodeshares=NULL)
   args <- list(...)
@@ -330,23 +331,26 @@ pointiter <- function(dataset,pset,control) {
 
   tryCatch(
     {
-      i <- 0; improve <- TRUE
-      while(improve && i < control$iters) {
+      i <- 0; improve <- TRUE; redo <- FALSE
+      while(improve && i < control$iters || redo) {
         i <- i+1
         control$mainiter <- i
         newopt <- ml(dataset,pset,control)
         newopt$mainiter <- i
         unscaleopt <- rescale(dataset,newopt)
+
         # insert into list
         opt <- c(list(unscaleopt), opt)
         names(opt)[1L] <- sprintf('iter%d',i)
         control$callback('full',unscaleopt, dataset,control)
+
         # check termination
+        redo <- attr(newopt$par,'badremoved') && !redo  # redo once if bad point
         ll.improve <- newopt$value - prevopt$value
         e.improve <- abs(newopt$entropy - prevopt$entropy)
         improve <- (ll.improve > control$ll.improve || e.improve > control$e.improve)
         prevopt <- newopt
-        if(improve && i < control$iters) pset <- addpoint(dataset,newopt$par,newopt$value,control)
+        if(improve && i < control$iters || redo) pset <- addpoint(dataset,newopt$par,newopt$value,control)
       }
       if(!improve) opt <- opt[-1]
       badset <- badpoints(opt[[1]]$par,control)
@@ -409,7 +413,7 @@ optprobs <- function(dataset,pset,control) {
   }
   gpfun <- function(a) {
     val[probpos] <- a
-    -attr(mphloglik(dataset,unflatten(val),dogradient=TRUE, control=control),'gradient')[probpos]
+    -attr(mphloglik(dataset,unflatten(val),dogradient=TRUE, onlyprobs=TRUE, control=control),'gradient')[probpos]
   }
 
   # go all the way with the relative tolerance, we need to get out of bad places.
@@ -432,7 +436,7 @@ optdist <- function(dataset,pset,control) {
   }
   gdfun <- function(a) {
     val[distpos] <- a
-    -attr(mphloglik(dataset,unflatten(val),dogradient=TRUE, control=control),'gradient')[distpos]
+    -attr(mphloglik(dataset,unflatten(val),dogradient=TRUE, onlydist=TRUE, control=control),'gradient')[distpos]
   }
 
   dopt <- optim(val[distpos],dfun,gdfun,method='BFGS',
@@ -475,7 +479,7 @@ newpoint <- function(dataset,pset,value,control) {
 
   if(!(muopt$status %in% c(0,2))) {
     muopt$convergence <- muopt$status
-    muopt$value <- muopt$objective 
+    muopt$value <- -muopt$objective 
     control$callback('newpoint',muopt,dataset,control)
     # that one failed, try broader interval
     newset$pargs[] <- p2a(c(pr,0))
@@ -488,7 +492,7 @@ newpoint <- function(dataset,pset,value,control) {
                                       maxeval=10000*length(args),population=20*length(args)))
   }
   muopt$eval_f <- NULL # remove, it may contain a big environment, so unsuitable to save
-  muopt$value <- muopt$objective 
+  muopt$value <- -muopt$objective 
   muopt$convergence <- muopt$status
   control$callback('newpoint',muopt,dataset,control)
   
@@ -513,7 +517,7 @@ badpoints <- function(pset,control) {
     for(j in seq_len(i-1)) {
       if(!okpt[j]) next
       muj <- sapply(pset$parset, function(pp) pp$mu[j])
-      if(max(abs(exp(muj) - exp(mui))) < control$eqtol) {
+      if(max(abs(exp(muj) - exp(mui))/(1e-9+exp(muj)+exp(mui))) < control$eqtol) {
         mumat <- rbind(muj,mui)
         rownames(mumat) <- c(j,i)
         colnames(mumat) <- names(pset$parset)
@@ -596,7 +600,7 @@ optfull <- function(dataset, pset, control) {
 
   args <- flatten(pset)
   val <- mphloglik(dataset,pset,dogradient=TRUE,control=control)
-  tol <- 1e-4*control$tol/(control$tol+abs(val))
+  tol <- 1e-14#1e-4*control$tol/(control$tol+abs(val))
   opt <- optim(args,LL,gLL,method=control$method,
         control=list(trace=0,REPORT=10,maxit=control$itfac*length(args),lmm=60,
                      reltol=tol),
@@ -639,8 +643,6 @@ ml <- function(dataset,pset,control) {
   })
 
   skel <- attr(flatten(sol),'skeleton')
-
-
 
   opt$value <- -opt$value
   opt$par <- sol
@@ -723,7 +725,7 @@ makeparset <- function(dataset,npoints,oldset) {
 }
 
 
-mymodelmatrix <- function(formula,mf,risksets) {
+mymodelmatrix <- function(formula,mf,risksets,frame) {
 
   #### Handle the specials ####
   mt <- terms(formula, specials=c('ID','D', 'S', 'C'))
@@ -747,7 +749,7 @@ mymodelmatrix <- function(formula,mf,risksets) {
   IF <- Reduce(addc,cvars,IF)
   # Now, IF is a suitable formula with all specials removed.
   mf[[2L]] <- IF
-  mf <- eval.parent(mf)
+  mf <- eval(mf,frame)
 
   # Pick up the special covariates ID, D, and S
   id <- as.integer(mf[[as.character(Ilist$ID)]])
