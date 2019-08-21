@@ -418,7 +418,9 @@ optprobs <- function(dataset,pset,control) {
 
   # go all the way with the relative tolerance, we need to get out of bad places.
   aopt <- optim(pset$pargs,pfun,gpfun,method='BFGS',
-                control=list(trace=0,REPORT=1,maxit=max(200,10*(length(probpos))), reltol=1e-14))
+                control=list(trace=0,REPORT=1,
+                             maxit=max(200,control$itfac*length(pset$pargs)), 
+                             reltol=1e-14))
 #  message('probs:',sprintf(' %.7f',a2p(aopt$par)), ' value: ',aopt$value)
   pset$pargs[] <- aopt$par
   control$callback('prob',aopt,dataset,control)
@@ -440,7 +442,9 @@ optdist <- function(dataset,pset,control) {
   }
 
   dopt <- optim(val[distpos],dfun,gdfun,method='BFGS',
-                control=list(trace=0,REPORT=1,maxit=max(200,10*length(distpos)), reltol=1e-14))
+                control=list(trace=0,REPORT=1,maxit=max(200,
+                                                        control$itfac*length(distpos)), 
+                             reltol=1e-14))
   val[distpos] <- dopt$par
   dopt$par <- unflatten(val)
   control$callback('dist',dopt,dataset,control)
@@ -465,9 +469,10 @@ newpoint <- function(dataset,pset,value,control) {
 
   # find ranges for the mus.
   # stick to the mean +/- something  in each dimension
-  mom <- mphmoments(pset)
-  low <- log(mom[,'mean']) - control$lowint
-  high <- log(mom[,'mean']) + control$highint
+  med <- mphmedian(pset)
+  low <- log(med) - control$lowint
+  high <- log(med) + control$highint
+
   args <- runif(length(low),0,1)*(high-low) + low
   muopt <- nloptr::nloptr(args, fun,lb=low, ub=high, gdiff=gdiff,
                           opts=list(algorithm='NLOPT_GN_ISRES',
@@ -517,7 +522,7 @@ badpoints <- function(pset,control) {
     for(j in seq_len(i-1)) {
       if(!okpt[j]) next
       muj <- sapply(pset$parset, function(pp) pp$mu[j])
-      if(max(abs(exp(muj) - exp(mui))/(1e-9+exp(muj)+exp(mui))) < control$eqtol) {
+      if(max(abs(exp(muj) - exp(mui))/(exp(muj)+exp(mui))) < control$eqtol) {
         mumat <- rbind(muj,mui)
         rownames(mumat) <- c(j,i)
         colnames(mumat) <- names(pset$parset)
@@ -590,21 +595,21 @@ optfull <- function(dataset, pset, control) {
     nlopt <- nloptr::nloptr(args, fun, lb=lb, ub=ub, 
                             skel=attr(args,'skeleton'), ctrl=control, dataset=dataset,
                             opts=list(algorithm=method,
-                                      maxeval=control$itfac*length(args), ftol_abs=control$tol, xtol_rel=0))
+                                      maxeval=control$itfac*length(args), 
+                                      ftol_abs=control$tol, xtol_rel=0))
     nlopt$eval_f <- NULL
     nlopt$par <- unflatten(nlopt$solution,attr(args,'skeleton'))
     nlopt$value <- nlopt$objective
     nlopt$convergence <- if(nlopt$status %in% c(1,3)) 0 else nlopt$status
     return(nlopt)
-}
+  }
 
   args <- flatten(pset)
   val <- mphloglik(dataset,pset,dogradient=TRUE,control=control)
-  tol <- 1e-14#1e-4*control$tol/(control$tol+abs(val))
   opt <- optim(args,LL,gLL,method=control$method,
-        control=list(trace=0,REPORT=10,maxit=control$itfac*length(args),lmm=60,
-                     reltol=tol),
-        skel=attr(args,'skeleton'), ctrl=control,dataset=dataset)
+               control=list(trace=0,REPORT=10,maxit=control$itfac*length(args),lmm=60,
+                            reltol=1e-14),
+               skel=attr(args,'skeleton'), ctrl=control,dataset=dataset)
   opt$par <- unflatten(opt$par)
   opt
 }
